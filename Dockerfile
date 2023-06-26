@@ -1,5 +1,5 @@
 # Copyright Contributors to the Open Cluster Management project
-FROM golang:1.19 AS builder
+FROM golang:1.20 AS builder
 
 ARG OS=linux
 ARG ARCH=amd64
@@ -8,7 +8,7 @@ WORKDIR ${DIRPATH}
 
 COPY . .
 
-RUN apt-get update && apt-get install net-tools && make vendor 
+#RUN apt-get update && apt-get install net-tools && make vendor 
 RUN GOOS=${OS} \
     GOARCH=${ARCH} \
     make build

@@ -110,9 +110,14 @@ type ServerRunOptions struct {
 
 	// EnableSelfManagement register the current cluster self as a managed cluster
 	EnableSelfManagement bool
+	// SelfManagementClusterName is the name of self management cluster, by default, it's local-cluster
+	SelfManagementClusterName string
 
 	// ClusterAutoApprovalUsers is a bootstrap user list whose cluster registration requests can be automatically approved
 	ClusterAutoApprovalUsers []string
+
+	// EnableDelegatingAuthentication delegate the authentication with controlplane hosing cluster
+	EnableDelegatingAuthentication bool
 }
 
 type ExtraOptions struct {
@@ -238,18 +243,18 @@ func (options *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&options.ControlplaneConfigDir, "controlplane-config-dir", options.ControlplaneConfigDir,
 		"Path to the file directory contains minimum requried configurations for controlplane server.")
 	fs.BoolVar(&options.EnableSelfManagement, "self-management", options.EnableSelfManagement,
-		"Register the current controlplane as a managed cluster.")
+		"Register the current controlplane as a self managed cluster.")
+	fs.StringVar(&options.SelfManagementClusterName, "self-management-cluster-name", options.SelfManagementClusterName,
+		"Name of the self managed cluster name.")
 	fs.StringArrayVar(&options.ClusterAutoApprovalUsers, "cluster-auto-approval-users", options.ClusterAutoApprovalUsers,
 		"A bootstrap user list whose cluster registration requests can be automatically approved.")
+	fs.BoolVar(&options.EnableDelegatingAuthentication, "delegating-authentication", options.EnableDelegatingAuthentication,
+		"Delegate authentication to the controlplane hosting cluster.")
 }
 
 // Complete set default Options.
 // Should be called after kube-apiserver flags parsed.
 func (s *ServerRunOptions) Complete(stopCh <-chan struct{}) error {
-	// configure kube-apiserver features here
-	if err := utilfeature.DefaultMutableFeatureGate.Set("OpenAPIV3=false"); err != nil {
-		return err
-	}
 	for name := range utilfeature.DefaultMutableFeatureGate.GetAll() {
 		klog.Infof("kube-apiserver feature %s is %v", name, utilfeature.DefaultMutableFeatureGate.Enabled(name))
 	}
@@ -319,6 +324,15 @@ func (s *ServerRunOptions) Complete(stopCh <-chan struct{}) error {
 			}
 		}
 		klog.Infof("external host was not specified, using %v", s.GenericServerRunOptions.ExternalHost)
+	}
+
+	if s.EnableDelegatingAuthentication {
+		s.Authentication.DelegatingAuthenticatorConfig = &DelegatingAuthenticatorConfig{
+			// very low for responsiveness, but high enough to handle storms
+			CacheTTL:                 10 * time.Second,
+			WebhookRetryBackoff:      genericoptions.DefaultAuthWebhookRetryBackoff(),
+			TokenAccessReviewTimeout: 10 * time.Second,
+		}
 	}
 
 	// authorization

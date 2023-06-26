@@ -8,12 +8,11 @@ import (
 
 	"github.com/openshift/library-go/pkg/controller/controllercmd"
 	"github.com/openshift/library-go/pkg/controller/factory"
-	"github.com/openshift/library-go/pkg/operator/events"
 	"github.com/pkg/errors"
 
 	certv1 "k8s.io/api/certificates/v1"
 	certv1beta1 "k8s.io/api/certificates/v1beta1"
-	"k8s.io/client-go/dynamic"
+	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	genericinformers "k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -29,21 +28,21 @@ import (
 	workv1client "open-cluster-management.io/api/client/work/clientset/versioned"
 	workv1informers "open-cluster-management.io/api/client/work/informers/externalversions"
 	ocmfeature "open-cluster-management.io/api/feature"
-	ocmcrds "open-cluster-management.io/multicluster-controlplane/config/crds"
-	confighub "open-cluster-management.io/multicluster-controlplane/config/hub"
+	"open-cluster-management.io/multicluster-controlplane/pkg/controllers/bootstrap"
 	"open-cluster-management.io/multicluster-controlplane/pkg/features"
-	scheduling "open-cluster-management.io/placement/pkg/controllers/scheduling"
-	"open-cluster-management.io/placement/pkg/debugger"
-	"open-cluster-management.io/registration/pkg/helpers"
-	"open-cluster-management.io/registration/pkg/hub/addon"
-	"open-cluster-management.io/registration/pkg/hub/clusterrole"
-	"open-cluster-management.io/registration/pkg/hub/csr"
-	"open-cluster-management.io/registration/pkg/hub/lease"
-	"open-cluster-management.io/registration/pkg/hub/managedcluster"
-	"open-cluster-management.io/registration/pkg/hub/managedclusterset"
-	"open-cluster-management.io/registration/pkg/hub/managedclustersetbinding"
-	"open-cluster-management.io/registration/pkg/hub/rbacfinalizerdeletion"
-	"open-cluster-management.io/registration/pkg/hub/taint"
+	"open-cluster-management.io/multicluster-controlplane/pkg/util"
+	scheduling "open-cluster-management.io/ocm/pkg/placement/controllers/scheduling"
+	"open-cluster-management.io/ocm/pkg/placement/debugger"
+	"open-cluster-management.io/ocm/pkg/registration/helpers"
+	"open-cluster-management.io/ocm/pkg/registration/hub/addon"
+	"open-cluster-management.io/ocm/pkg/registration/hub/clusterrole"
+	"open-cluster-management.io/ocm/pkg/registration/hub/csr"
+	"open-cluster-management.io/ocm/pkg/registration/hub/lease"
+	"open-cluster-management.io/ocm/pkg/registration/hub/managedcluster"
+	"open-cluster-management.io/ocm/pkg/registration/hub/managedclusterset"
+	"open-cluster-management.io/ocm/pkg/registration/hub/managedclustersetbinding"
+	"open-cluster-management.io/ocm/pkg/registration/hub/rbacfinalizerdeletion"
+	"open-cluster-management.io/ocm/pkg/registration/hub/taint"
 )
 
 func InstallControllers(clusterAutoApprovalUsers []string) func(<-chan struct{}, *aggregatorapiserver.Config) error {
@@ -54,18 +53,23 @@ func InstallControllers(clusterAutoApprovalUsers []string) func(<-chan struct{},
 			restConfig := aggregatorConfig.GenericConfig.LoopbackClientConfig
 			restConfig.ContentType = "application/json"
 
-			dynamicClient, err := dynamic.NewForConfig(restConfig)
+			apiextensionsClient, err := apiextensionsclient.NewForConfig(aggregatorConfig.GenericConfig.LoopbackClientConfig)
 			if err != nil {
-				klog.Fatalf("failed to create dynamic client: %v", err)
+				klog.Fatalf("failed to create apiextensions client: %v", err)
 			}
 
-			ctx := GoContext(stopCh)
+			ctx := util.GoContext(stopCh)
 
-			if ocmcrds.WaitForOcmCrdReady(ctx, dynamicClient) {
-				klog.Infof("ocm crd is ready!")
+			if bootstrap.WaitFOROCMCRDsReady(ctx, apiextensionsClient) {
+				klog.Infof("ocm crds are ready")
 			}
 
-			if err := runControllers(ctx, restConfig, aggregatorConfig.GenericConfig.SharedInformerFactory, clusterAutoApprovalUsers); err != nil {
+			if err := runControllers(
+				ctx,
+				restConfig,
+				aggregatorConfig.GenericConfig.SharedInformerFactory,
+				clusterAutoApprovalUsers,
+			); err != nil {
 				klog.Fatalf("failed to bootstrap ocm controllers: %v", err)
 			}
 
@@ -80,7 +84,7 @@ func runControllers(ctx context.Context,
 	restConfig *rest.Config,
 	kubeInformers genericinformers.SharedInformerFactory,
 	clusterAutoApprovalUsers []string) error {
-	eventRecorder := events.NewInMemoryRecorder("registration-controller")
+	eventRecorder := util.NewLoggingRecorder("registration-controller")
 
 	kubeClient, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
@@ -90,7 +94,7 @@ func runControllers(ctx context.Context,
 	controllerContext := &controllercmd.ControllerContext{
 		KubeConfig:        restConfig,
 		EventRecorder:     eventRecorder,
-		OperatorNamespace: confighub.HubNamespace,
+		OperatorNamespace: "open-cluster-management-hub",
 	}
 
 	clusterClient, err := clusterv1client.NewForConfig(restConfig)
@@ -269,9 +273,12 @@ func runControllers(ctx context.Context,
 		controllerContext.EventRecorder, recorder,
 	)
 
+	go kubeInformers.Start(ctx.Done())
 	go clusterInformers.Start(ctx.Done())
 	go workInformers.Start(ctx.Done())
 	go addOnInformers.Start(ctx.Done())
+
+	//TODO need a way to verify all informers are synced
 
 	go managedClusterController.Run(ctx, 1)
 	go taintController.Run(ctx, 1)

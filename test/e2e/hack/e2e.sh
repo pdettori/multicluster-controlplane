@@ -37,7 +37,6 @@ agent_deploy_dir="${output}/agent/deploy"
 mkdir -p ${cluster_dir}
 mkdir -p ${agent_deploy_dir}
 
-echo "Create a cluster with kind ..."
 cluster="e2e-test"
 external_host_ip="127.0.0.1"
 external_host_port="30443"
@@ -56,15 +55,11 @@ echo "Load $IMAGE_NAME to the cluster $cluster ..."
 ${KIND} load docker-image $IMAGE_NAME --name $cluster
 
 echo "Deploy etcd in the cluster $cluster ..."
-cp $REPO_DIR/hack/deploy/etcd/statefulset.yaml $REPO_DIR/hack/deploy/etcd/statefulset.yaml.tmp
-sed -i "s/gp2/standard/g" $REPO_DIR/hack/deploy/etcd/statefulset.yaml
 pushd ${REPO_DIR}
 export KUBECONFIG=${kubeconfig}
-export CFSSL_DIR=${output}/etcd_ca
-make deploy-etcd
+STORAGE_CLASS_NAME="standard" make deploy-etcd
 unset KUBECONFIG
 popd
-mv $REPO_DIR/hack/deploy/etcd/statefulset.yaml.tmp $REPO_DIR/hack/deploy/etcd/statefulset.yaml
 
 namespace=multicluster-controlplane
 echo "Deploy standalone controlplane in namespace $namespace ..."
@@ -72,34 +67,30 @@ echo "Deploy standalone controlplane in namespace $namespace ..."
 ${KUBECTL} --kubeconfig ${kubeconfig} delete ns $namespace --ignore-not-found
 ${KUBECTL} --kubeconfig ${kubeconfig} create ns $namespace
 
-# copy etcd ca to helm folder
-ca_dir=${CFSSL_DIR}
-ca="${ca_dir}/ca.pem"
-cert="${ca_dir}/client.pem"
-key="${ca_dir}/client-key.pem"
-# use helm to install controlplane
-${HELM} install charts/multicluster-controlplane --kubeconfig ${kubeconfig} \
-    -n $namespace \
-    --set route.enabled=false \
-    --set nodeport.enabled=true \
-    --set nodeport.port=${external_host_port} \
-    --set apiserver.externalHostname=${external_host_ip} \
-    --set enableSelfManagement=true \
-    --set image=${IMAGE_NAME} \
-    --set autoApprovalBootstrapUsers="system:admin" \
-    --set etcd.mode=external \
-    --set 'etcd.servers={"http://etcd-0.etcd.multicluster-controlplane-etcd:2379","http://etcd-1.etcd.multicluster-controlplane-etcd:2379","http://etcd-2.etcd.multicluster-controlplane-etcd:2379"}' \
-    --set-file etcd.ca="${ca}" \
-    --set-file etcd.cert="${cert}" \
-    --set-file etcd.certkey="${key}" \
-    --generate-name
+pushd ${REPO_DIR}
+export HUB_NAME=${namespace}
+export EXTERNAL_HOSTNAME=${external_host_ip}
+export NODE_PORT="${external_host_port}"
+export SELF_MANAGEMENT=true
+export KUBECONFIG=${kubeconfig}
+make deploy
+unset KUBECONFIG
+unset HUB_NAME
+unset EXTERNAL_HOSTNAME
+unset NODE_PORT
+unset SELF_MANAGEMENT
+popd
 
 wait_command "${KUBECTL} --kubeconfig $kubeconfig -n multicluster-controlplane get secrets multicluster-controlplane-kubeconfig"
+${KUBECTL} --kubeconfig $kubeconfig -n multicluster-controlplane -n multicluster-controlplane logs -l app=multicluster-controlplane --tail=-1
+
 hubkubeconfig="${cluster_dir}/controlplane.kubeconfig"
 ${KUBECTL} --kubeconfig $kubeconfig -n multicluster-controlplane get secrets multicluster-controlplane-kubeconfig -ojsonpath='{.data.kubeconfig}' | base64 -d > ${hubkubeconfig}
 
-# TODO need a flag to indicate the controlplane is ready
-sleep 120
+
+# wait the controlplane is ready
+wait_for_url "https://127.0.0.1/readyz"
+
 
 echo "Deploy standalone controlplane agents ..."
 cp -r ${REPO_DIR}/hack/deploy/agent/* $agent_deploy_dir

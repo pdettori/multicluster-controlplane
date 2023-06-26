@@ -4,7 +4,6 @@ BINARYDIR := bin
 KUBECTL?=kubectl
 KUSTOMIZE?=kustomize
 
-ETCD_NS?=multicluster-controlplane-etcd
 HUB_NAME?=multicluster-controlplane
 
 IMAGE_REGISTRY?=quay.io/open-cluster-management
@@ -13,39 +12,45 @@ export IMAGE_NAME?=$(IMAGE_REGISTRY)/multicluster-controlplane:$(IMAGE_TAG)
 
 CONTROLPLANE_KUBECONFIG?=hack/deploy/cert-$(HUB_NAME)/kubeconfig
 
+# build
+
 check-copyright: 
 	@hack/check/check-copyright.sh
+.PHONY: check-copyright
 
-check: check-copyright 
+check: check-copyright
+.PHONY: check
 
 verify-gocilint:
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.45.2
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.53.2
 	go vet ./...
 	golangci-lint run --timeout=3m ./...
+.PHONY: verify-gocilint
 
 verify: verify-gocilint
+.PHONY: verify
 
 all: clean vendor build run
 .PHONY: all
 
-run:
+run: vendor build
 	hack/start-multicluster-controlplane.sh
 .PHONY: run
 
 build-bin-release:
 	$(rm -rf bin)
 	$(mkdir -p bin)
-	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/main.go && tar -czf bin/multicluster_controlplane_darwin_amd64.tar.gz LICENSE -C bin/ multicluster-controlplane
-	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/main.go && tar -czf bin/multicluster_controlplane_darwin_arm64.tar.gz LICENSE -C bin/ multicluster-controlplane
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/main.go && tar -czf bin/multicluster_controlplane_linux_amd64.tar.gz LICENSE -C bin/ multicluster-controlplane
-	GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/main.go && tar -czf bin/multicluster_controlplane_linux_arm64.tar.gz LICENSE -C bin/ multicluster-controlplane
-	GOOS=linux GOARCH=ppc64le go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/main.go && tar -czf bin/multicluster_controlplane_linux_ppc64le.tar.gz LICENSE -C bin/ multicluster-controlplane
-	GOOS=linux GOARCH=s390x go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/main.go && tar -czf bin/multicluster_controlplane_linux_s390x.tar.gz LICENSE -C bin/ multicluster-controlplane
-	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane.exe ./cmd/main.go && zip -q bin/multicluster_controlplane_windows_amd64.zip LICENSE -j bin/multicluster-controlplane.exe
+	GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/server/main.go && tar -czf bin/multicluster_controlplane_darwin_amd64.tar.gz LICENSE -C bin/ multicluster-controlplane
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/server/main.go && tar -czf bin/multicluster_controlplane_darwin_arm64.tar.gz LICENSE -C bin/ multicluster-controlplane
+	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/server/main.go && tar -czf bin/multicluster_controlplane_linux_amd64.tar.gz LICENSE -C bin/ multicluster-controlplane
+	GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/server/main.go && tar -czf bin/multicluster_controlplane_linux_arm64.tar.gz LICENSE -C bin/ multicluster-controlplane
+	GOOS=linux GOARCH=ppc64le go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/server/main.go && tar -czf bin/multicluster_controlplane_linux_ppc64le.tar.gz LICENSE -C bin/ multicluster-controlplane
+	GOOS=linux GOARCH=s390x go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane ./cmd/server/main.go && tar -czf bin/multicluster_controlplane_linux_s390x.tar.gz LICENSE -C bin/ multicluster-controlplane
+	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -gcflags=-trimpath=x/y -o bin/multicluster-controlplane.exe ./cmd/server/main.go && zip -q bin/multicluster_controlplane_windows_amd64.zip LICENSE -j bin/multicluster-controlplane.exe
 
-build: 
+build: vendor
 	$(shell if [ ! -e $(BINARYDIR) ];then mkdir -p $(BINARYDIR); fi)
-	go build -o bin/multicluster-controlplane cmd/server/main.go 
+	CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/multicluster-controlplane cmd/server/main.go 
 .PHONY: build
 
 image:
@@ -69,17 +74,19 @@ update:
 	bash -x hack/crd-update/copy-crds.sh
 .PHONY: update
 
-deploy-etcd: 
-	$(KUBECTL) get ns $(ETCD_NS); if [ $$? -ne 0 ] ; then $(KUBECTL) create ns $(ETCD_NS); fi
+# deploy
+
+deploy-etcd:
 	hack/deploy-etcd.sh
+.PHONY: deploy-etcd
 
 deploy:
-	hack/deploy-multicluster-controlplane.sh 
+	HUB_NAME=$(HUB_NAME) hack/deploy-multicluster-controlplane.sh
+.PHONY: deploy
 
 destroy:
-	$(KUSTOMIZE) build hack/deploy/controlplane | $(KUBECTL) delete --namespace $(HUB_NAME) --ignore-not-found -f -
-	$(KUBECTL) delete ns $(HUB_NAME) --ignore-not-found
-	rm -r hack/deploy/cert-$(HUB_NAME)
+	HUB_NAME=$(HUB_NAME) hack/deploy-multicluster-controlplane.sh uninstall
+.PHONY: destroy
 
 deploy-work-manager-addon:
 	$(KUBECTL) apply -k hack/deploy/addon/work-manager/hub --kubeconfig=$(CONTROLPLANE_KUBECONFIG)
@@ -87,6 +94,7 @@ deploy-work-manager-addon:
 	cd hack/deploy/addon/work-manager/manager && $(KUSTOMIZE) edit set namespace $(HUB_NAME)
 	$(KUSTOMIZE) build hack/deploy/addon/work-manager/manager | $(KUBECTL) apply -f -
 	mv hack/deploy/addon/work-manager/manager/kustomization.yaml.tmp hack/deploy/addon/work-manager/manager/kustomization.yaml
+.PHONY: deploy-work-manager-addon
 
 deploy-managed-serviceaccount-addon:
 	$(KUBECTL) apply -k hack/deploy/addon/managed-serviceaccount/hub --kubeconfig=$(CONTROLPLANE_KUBECONFIG)
@@ -94,6 +102,7 @@ deploy-managed-serviceaccount-addon:
 	cd hack/deploy/addon/managed-serviceaccount/manager && $(KUSTOMIZE) edit set namespace $(HUB_NAME)
 	$(KUSTOMIZE) build hack/deploy/addon/managed-serviceaccount/manager | $(KUBECTL) apply -f -
 	mv hack/deploy/addon/managed-serviceaccount/manager/kustomization.yaml.tmp hack/deploy/addon/managed-serviceaccount/manager/kustomization.yaml
+.PHONY: deploy-managed-serviceaccount-addon
 
 deploy-policy-addon:
 	$(KUBECTL) apply -k hack/deploy/addon/policy/hub --kubeconfig=$(CONTROLPLANE_KUBECONFIG)
@@ -101,13 +110,12 @@ deploy-policy-addon:
 	cd hack/deploy/addon/policy/manager && $(KUSTOMIZE) edit set namespace $(HUB_NAME)
 	$(KUSTOMIZE) build hack/deploy/addon/policy/manager | $(KUBECTL) apply -f -
 	mv hack/deploy/addon/policy/manager/kustomization.yaml.tmp hack/deploy/addon/policy/manager/kustomization.yaml
-
+.PHONY: deploy-policy-addon
 
 deploy-all: deploy deploy-work-manager-addon deploy-managed-serviceaccount-addon deploy-policy-addon
+.PHONY: deploy-all
 
 # test
-export CONTROLPLANE_NUMBER ?= 2
-export VERBOSE ?= 5
 
 cleanup-e2e:
 	./test/e2e/hack/cleanup.sh

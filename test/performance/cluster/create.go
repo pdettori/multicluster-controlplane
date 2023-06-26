@@ -19,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
@@ -64,8 +63,6 @@ type clusterCreateOptions struct {
 	hubClusterClient clusterclient.Interface
 	hubWorkClient    workclient.Interface
 
-	spokeRestConfig *rest.Config
-
 	metricsRecorder *metrics.MetricsRecorder
 }
 
@@ -108,13 +105,6 @@ func (o *clusterCreateOptions) Complete() error {
 	o.metricsRecorder, err = metrics.BuildMetricsGetter(o.Kubeconfig, o.Namespace)
 	if err != nil {
 		return fmt.Errorf("failed to build metrics getter with %s, %v", o.Kubeconfig, err)
-	}
-
-	if !o.Pseudo {
-		o.spokeRestConfig, err = clientcmd.BuildConfigFromFlags("", o.SpokeKubeconfig)
-		if err != nil {
-			return fmt.Errorf("failed to build spoke kubeconfig with %s, %v", o.SpokeKubeconfig, err)
-		}
 	}
 
 	return nil
@@ -269,7 +259,7 @@ func (o *clusterCreateOptions) registerCluster(ctx context.Context, clusterName 
 	utils.PrintMsg(fmt.Sprintf("starting the agent for cluster %q ...", clusterName))
 	klusterletAgent := agent.NewAgentOptions().
 		WithClusterName(clusterName).
-		WithSpokeKubeconfig(o.spokeRestConfig).
+		WithKubeconfig(o.SpokeKubeconfig).
 		WithBootstrapKubeconfig(o.HubKubeconfig).
 		WithHubKubeconfigDir(agentHubKubeconfigDir).
 		WithHubKubeconfigSecreName(fmt.Sprintf("%s-hub-kubeconfig-secret", clusterName))
@@ -293,55 +283,57 @@ func (o *clusterCreateOptions) registerCluster(ctx context.Context, clusterName 
 }
 
 func (o *clusterCreateOptions) approveCSR(ctx context.Context, clusterName string) error {
-	return wait.Poll(1*time.Second, 60*time.Second, func() (bool, error) {
-		csrs, err := o.hubKubeClient.CertificatesV1().CertificateSigningRequests().List(ctx, metav1.ListOptions{
-			LabelSelector: fmt.Sprintf("open-cluster-management.io/cluster-name=%s", clusterName),
-		})
-		if err != nil {
-			return false, err
-		}
-
-		if len(csrs.Items) == 0 {
-			return false, nil
-		}
-
-		for _, csr := range csrs.Items {
-			if isCSRInTerminalState(&csr.Status) {
-				continue
-			}
-
-			copied := csr.DeepCopy()
-			copied.Status.Conditions = append(csr.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
-				Type:           certificatesv1.CertificateApproved,
-				Status:         corev1.ConditionTrue,
-				Reason:         "AutoApprovedByE2ETest",
-				Message:        "Auto approved by e2e test",
-				LastUpdateTime: metav1.Now(),
+	return wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, 60*time.Second, true,
+		func(ctx context.Context) (bool, error) {
+			csrs, err := o.hubKubeClient.CertificatesV1().CertificateSigningRequests().List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("open-cluster-management.io/cluster-name=%s", clusterName),
 			})
-			_, err := o.hubKubeClient.CertificatesV1().CertificateSigningRequests().UpdateApproval(
-				ctx, copied.Name, copied, metav1.UpdateOptions{})
 			if err != nil {
 				return false, err
 			}
-		}
 
-		return true, nil
-	})
+			if len(csrs.Items) == 0 {
+				return false, nil
+			}
+
+			for _, csr := range csrs.Items {
+				if isCSRInTerminalState(&csr.Status) {
+					continue
+				}
+
+				copied := csr.DeepCopy()
+				copied.Status.Conditions = append(csr.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
+					Type:           certificatesv1.CertificateApproved,
+					Status:         corev1.ConditionTrue,
+					Reason:         "AutoApprovedByE2ETest",
+					Message:        "Auto approved by e2e test",
+					LastUpdateTime: metav1.Now(),
+				})
+				_, err := o.hubKubeClient.CertificatesV1().CertificateSigningRequests().UpdateApproval(
+					ctx, copied.Name, copied, metav1.UpdateOptions{})
+				if err != nil {
+					return false, err
+				}
+			}
+
+			return true, nil
+		})
 }
 
 func (o *clusterCreateOptions) waitClusterAvailable(ctx context.Context, clusterName string) error {
-	return wait.Poll(1*time.Second, o.Timeout, func() (bool, error) {
-		cluster, err := o.hubClusterClient.ClusterV1().ManagedClusters().Get(ctx, clusterName, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
+	return wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, o.Timeout, true,
+		func(ctx context.Context) (bool, error) {
+			cluster, err := o.hubClusterClient.ClusterV1().ManagedClusters().Get(ctx, clusterName, metav1.GetOptions{})
+			if err != nil {
+				return false, err
+			}
 
-		if meta.IsStatusConditionTrue(cluster.Status.Conditions, clusterv1.ManagedClusterConditionAvailable) {
-			return true, nil
-		}
+			if meta.IsStatusConditionTrue(cluster.Status.Conditions, clusterv1.ManagedClusterConditionAvailable) {
+				return true, nil
+			}
 
-		return false, nil
-	})
+			return false, nil
+		})
 }
 
 func (o *clusterCreateOptions) createWorks(ctx context.Context, clusterName string) error {
@@ -362,30 +354,38 @@ func (o *clusterCreateOptions) createWorks(ctx context.Context, clusterName stri
 		creationTime := time.Since(startTime) / (1000 * time.Microsecond)
 
 		waitStartTime := time.Now()
-		if err := wait.Poll(1*time.Second, o.Timeout, func() (bool, error) {
-			work, err := o.hubWorkClient.WorkV1().ManifestWorks(work.Namespace).Get(ctx, work.Name, metav1.GetOptions{})
-			if errors.IsNotFound(err) {
+		var appliedTime time.Duration
+		if err := wait.PollUntilContextTimeout(context.TODO(), 1*time.Second, o.Timeout, true,
+			func(ctx context.Context) (bool, error) {
+				work, err := o.hubWorkClient.WorkV1().ManifestWorks(work.Namespace).Get(ctx, work.Name, metav1.GetOptions{})
+				if errors.IsNotFound(err) {
+					return false, nil
+				}
+				if err != nil {
+					return false, err
+				}
+
+				if meta.IsStatusConditionTrue(work.Status.Conditions, workv1.WorkApplied) {
+					if appliedTime == 0 {
+						appliedTime = time.Since(waitStartTime) / (1000 * time.Microsecond)
+					}
+				}
+
+				if meta.IsStatusConditionTrue(work.Status.Conditions, workv1.WorkAvailable) {
+					return true, nil
+				}
+
 				return false, nil
-			}
-			if err != nil {
-				return false, err
-			}
-
-			if meta.IsStatusConditionTrue(work.Status.Conditions, workv1.WorkAvailable) {
-				return true, nil
-			}
-
-			return false, nil
-		}); err != nil {
+			}); err != nil {
 			return err
 		}
 		// milli second
-		waitEndTime := time.Since(waitStartTime) / (1000 * time.Microsecond)
+		availableTime := time.Since(waitStartTime) / (1000 * time.Microsecond)
 
 		// second
 		usedTime := time.Since(startTime) / (time.Millisecond * time.Microsecond)
-		if err := utils.AppendRecordToFile(workRecordFile, fmt.Sprintf("%d,%d,%d,%d",
-			index, creationTime, waitEndTime, usedTime)); err != nil {
+		if err := utils.AppendRecordToFile(workRecordFile, fmt.Sprintf("%d,%d,%d,%d,%d",
+			index, creationTime, appliedTime, availableTime, usedTime)); err != nil {
 			return err
 		}
 	}

@@ -32,6 +32,9 @@ spec:
         {{- if eq .Values.enableSelfManagement true }}
         - "--self-management"
         {{- end }}
+        {{- if eq .Values.enableDelegatingAuthentication true }}
+        - "--delegating-authentication"
+        {{- end }}
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -39,6 +42,38 @@ spec:
               - ALL
           privileged: false
           runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        livenessProbe:
+          httpGet:
+            path: /livez
+            scheme: HTTPS
+            port: 9443
+          failureThreshold: 8
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            scheme: HTTPS
+            port: 9443
+          failureThreshold: 3
+          initialDelaySeconds: 2
+          periodSeconds: 1
+          successThreshold: 1
+          timeoutSeconds: 15
+        startupProbe:
+          failureThreshold: 24
+          httpGet:
+            path: /livez
+            port: 9443
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 15
         volumeMounts: 
         - name: controlplane-config
           mountPath: /controlplane_config
