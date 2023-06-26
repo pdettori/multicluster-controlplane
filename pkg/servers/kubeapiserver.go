@@ -13,7 +13,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingapiv1 "k8s.io/api/autoscaling/v1"
 	autoscalingapiv2 "k8s.io/api/autoscaling/v2"
-	batchapiv1 "k8s.io/api/batch/v1"
+
+	//batchapiv1 "k8s.io/api/batch/v1"
 	networkingapiv1 "k8s.io/api/networking/v1"
 	nodev1 "k8s.io/api/node/v1"
 	policyapiv1 "k8s.io/api/policy/v1"
@@ -357,11 +358,12 @@ func CreateProxyTransport() *http.Transport {
 }
 
 func getAPIResourceConfig() *serverstorage.ResourceConfig {
+	fmt.Println(">>>>>>>>>>>>>>>>>>>>>>> Resource config")
 	resourceConfig := controlplane.DefaultAPIResourceConfigSource()
 	resourceConfig.DisableVersions(appsv1.SchemeGroupVersion,
 		autoscalingapiv1.SchemeGroupVersion,
 		autoscalingapiv2.SchemeGroupVersion,
-		batchapiv1.SchemeGroupVersion,
+		/* batchapiv1.SchemeGroupVersion, */
 		networkingapiv1.SchemeGroupVersion,
 		nodev1.SchemeGroupVersion,
 		policyapiv1.SchemeGroupVersion,

@@ -257,6 +257,7 @@ var apiVersionPriorities = map[schema.GroupVersion]priority{
 	// Append a new group to the end of the list if unsure.
 	// You can use min(existing group)-100 as the initial value for a group.
 	// Version can be set to 9 (to have space around) for a new group.
+	{Group: "batch", Version: "v1"}: {group: 15900, version: 9},
 }
 
 func apiServicesToRegister(delegateAPIServer genericapiserver.DelegationTarget, registration autoregister.AutoAPIServiceRegistration) []*v1.APIService {
