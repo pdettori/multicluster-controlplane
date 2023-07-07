@@ -29,6 +29,7 @@ type ControlplaneRunConfig struct {
 
 type ApiserverConfig struct {
 	ExternalHostname string `yaml:"externalHostname"`
+	InternalHostname string `yaml:"internalHostname"`
 	Port             int    `yaml:"port"`
 	CAFile           string `yaml:"caFile"`
 	CAKeyFile        string `yaml:"caKeyFile"`

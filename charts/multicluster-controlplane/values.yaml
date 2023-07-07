@@ -18,8 +18,10 @@ enableDelegatingAuthentication: false
 
 apiserver:
   externalHostname: ""
+  internallHostname: ""
   ca: ""
   cakey: ""
+  port: 443
 etcd:
   mode: "embed"
   servers: []

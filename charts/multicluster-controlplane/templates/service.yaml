@@ -21,7 +21,7 @@ spec:
     - name: app
       protocol: TCP
       targetPort: 9443
-      port: 443
+      port:  {{ .Values.apiserver.port }}
       {{- if eq .Values.nodeport.enabled true }}
       nodePort: {{ .Values.nodeport.port }}
       {{- end }} 

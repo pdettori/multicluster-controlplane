@@ -1,5 +1,5 @@
 apiVersion: v2
-name: multicluster-controlplane
+name: multicluster-controlplane-chart
 description: A Helm chart for multicluster-controlplane
 
 # A chart can be either an 'application' or a 'library' chart.

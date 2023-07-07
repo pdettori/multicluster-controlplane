@@ -66,6 +66,19 @@ func certSetup(cfg *configs.ControlplaneRunConfig) (*certchains.CertificateChain
 	//------------------------------
 	// SERVING CERTIFICATE SIGNERS
 	//------------------------------
+	hostnames := []string{
+		cfg.Apiserver.ExternalHostname,
+		"kubernetes.default",
+		"kubernetes.default.svc",
+		fmt.Sprintf("multicluster-controlplane.%s", util.GetComponentNamespace()),
+		fmt.Sprintf("multicluster-controlplane.%s.svc", util.GetComponentNamespace()),
+		"localhost",
+		"127.0.0.1",
+		"10.0.0.1",
+	}
+	if cfg.Apiserver.InternalHostname != "" {
+		hostnames = append(hostnames, cfg.Apiserver.InternalHostname)
+	}
 	serverSigner = certchains.NewCertificateSigner(
 		ServerCACertDirName,
 		ServerCACertDir(certificateDirectory),
@@ -76,16 +89,7 @@ func certSetup(cfg *configs.ControlplaneRunConfig) (*certchains.CertificateChain
 				Name:         KubeApiserverCertDirName,
 				ValidityDays: ShortLivedCertificateValidityDays,
 			},
-			Hostnames: []string{
-				cfg.Apiserver.ExternalHostname,
-				"kubernetes.default",
-				"kubernetes.default.svc",
-				fmt.Sprintf("multicluster-controlplane.%s", util.GetComponentNamespace()),
-				fmt.Sprintf("multicluster-controlplane.%s.svc", util.GetComponentNamespace()),
-				"localhost",
-				"127.0.0.1",
-				"10.0.0.1",
-			},
+			Hostnames: hostnames,
 		},
 		&certchains.ServingCertificateSigningRequestInfo{
 			CSRMeta: certchains.CSRMeta{
